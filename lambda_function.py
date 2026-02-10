@@ -63,12 +63,17 @@ def parse_slack_command(text: str) -> Dict[str, str]:
 
 def address_to_coords(address: str) -> tuple:
     """주소를 위경도로 변환 (간단한 매칭)"""
+    
+    # 도로명 주소 패턴 감지 (번길, 로, 대로 등)
+    is_road_address = any(keyword in address for keyword in ["로", "길", "대로"])
+    
     LOCATION_DB = {
         # 동 단위 (우선순위 높음)
         "정자동": (37.3595, 127.1088), "서현동": (37.3836, 127.1234),
         "야탑동": (37.4119, 127.1281), "이매동": (37.3897, 127.1289),
         "판교동": (37.3948, 127.1114), "삼평동": (37.4021, 127.1076),
         "수내동": (37.3833, 127.1019), "구미동": (37.3500, 127.1100),
+        "금곡동": (37.3500, 127.1100),
         # 서울 구
         "강남구": (37.5172, 127.0473), "서초구": (37.4837, 127.0324),
         "송파구": (37.5145, 127.1059), "강동구": (37.5301, 127.1238),
@@ -100,9 +105,27 @@ def address_to_coords(address: str) -> tuple:
         "대전": (36.3504, 127.3845), "대구": (35.8714, 128.6014),
         "부산": (35.1796, 129.0756), "광주": (35.1595, 126.8526),
         "울산": (35.5384, 129.3114), "세종": (36.4800, 127.2890),
+        # 주요 도로명 (대략적인 중심 좌표)
+        "성남대로": (37.4201, 127.1262),
+        "정자일로": (37.3595, 127.1088),
+        "내정로": (37.3595, 127.1088),
     }
     
-    # 가장 구체적인 위치부터 찾기 (동이 우선)
+    # 도로명 주소인 경우
+    if is_road_address:
+        # 도로명에서 키워드 추출
+        for road_name in ["성남대로", "정자일로", "내정로"]:
+            if road_name in address:
+                # 도로명 좌표 반환
+                if road_name in LOCATION_DB:
+                    return LOCATION_DB[road_name]
+        
+        # 도로명을 찾지 못하면 시/구로 검색
+        for location, coords in LOCATION_DB.items():
+            if location in address and location.endswith(("시", "구")):
+                return coords
+    
+    # 일반 주소: 가장 구체적인 위치부터 찾기 (동이 우선)
     # 주소를 역순으로 검색 (뒤에서부터 = 더 구체적)
     address_parts = address.split()
     for part in reversed(address_parts):
@@ -130,7 +153,7 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 
 
 def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
-    """병원 검색 API 호출 - 위치 기반"""
+    """병원 검색 API 호출 - 목록 API로 진료과목 필터 + 거리 계산"""
     
     # 진료과목 코드 찾기
     dept_code = DEPARTMENT_MAP.get(department)
@@ -142,25 +165,29 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
     lat, lon = address_to_coords(location)
     print(f"검색 위치: {location} → 위도 {lat}, 경도 {lon}")
     
-    # 위치 기반 API 호출
+    # 주소를 시/도와 시/군/구로 분리
+    location_parts = location.split()
+    sido = location_parts[0] if len(location_parts) > 0 else ""
+    sigungu = location_parts[1] if len(location_parts) > 1 else ""
+    
+    # 목록 API로 진료과목 필터링 (많이 가져오기)
     params = {
         "serviceKey": SERVICE_KEY,
-        "WGS84_LON": str(lon),
-        "WGS84_LAT": str(lat),
+        "Q0": sido,  # 주소(시도)
+        "Q1": sigungu,  # 주소(시군구)
+        "QD": dept_code,  # 진료과목
         "pageNo": "1",
-        "numOfRows": "50",  # 많이 가져와서 필터링
+        "numOfRows": "100",  # 많이 가져와서 거리 계산
         "_type": "json"
     }
     
-    url = f"{API_ENDPOINT_LOCATION}?{urllib.parse.urlencode(params)}"
-    print(f"API 호출: 위치 기반 검색")
+    url = f"{API_ENDPOINT}?{urllib.parse.urlencode(params)}"
+    print(f"API 호출: 목록 검색 (진료과목 필터)")
     
     try:
         with urllib.request.urlopen(url) as response:
             response_text = response.read().decode('utf-8')
             data = json.loads(response_text)
-            
-            print(f"API 응답 (처음 500자): {response_text[:500]}")
             
             if isinstance(data, dict) and "response" in data:
                 header = data["response"].get("header", {})
@@ -171,6 +198,9 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
                     return []
                 
                 body = data["response"].get("body", {})
+                total_count = body.get("totalCount", 0)
+                print(f"진료과목 필터 결과: {total_count}개")
+                
                 items = body.get("items", "")
                 
                 if isinstance(items, str) and items == "":
@@ -186,25 +216,40 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
                     else:
                         return []
                     
-                    # 진료과목으로 필터링 및 거리 계산
-                    filtered = []
+                    # 거리 계산 및 정렬
                     for hospital in all_hospitals:
-                        # 위경도 필드명이 다를 수 있음
-                        h_lat = hospital.get("latitude") or hospital.get("wgs84Lat", 0)
-                        h_lon = hospital.get("longitude") or hospital.get("wgs84Lon", 0)
+                        # 위경도 필드명
+                        h_lat = hospital.get("wgs84Lat", 0)
+                        h_lon = hospital.get("wgs84Lon", 0)
                         
                         if h_lat and h_lon:
                             distance = calculate_distance(lat, lon, float(h_lat), float(h_lon))
                             hospital["distance"] = distance
-                            
-                            # 5km 이내만 포함
-                            if distance <= 5:
-                                filtered.append(hospital)
+                        else:
+                            hospital["distance"] = 999  # 좌표 없으면 멀리
+                    
+                    # 진료과목으로 필터링 (병원 이름 기반)
+                    # API의 QD 파라미터가 제대로 작동하지 않아서 추가 필터링 필요
+                    dept_filtered = []
+                    for hospital in all_hospitals:
+                        name = hospital.get("dutyName", "")
+                        
+                        # 진료과목이 병원 이름에 포함되어 있는지 확인
+                        if department in name:
+                            dept_filtered.append(hospital)
+                    
+                    # 필터링된 결과가 없으면 전체 사용 (종합병원 등)
+                    if dept_filtered:
+                        all_hospitals = dept_filtered
+                        print(f"진료과목 이름 필터링: {len(all_hospitals)}개")
                     
                     # 거리순 정렬
-                    filtered.sort(key=lambda x: x.get("distance", 999))
+                    all_hospitals.sort(key=lambda x: x.get("distance", 999))
                     
-                    print(f"필터링 결과: {len(filtered)}개 병원")
+                    # 가까운 병원만 (10km 이내)
+                    filtered = [h for h in all_hospitals if h.get("distance", 999) <= 10]
+                    
+                    print(f"10km 이내 병원: {len(filtered)}개")
                     return filtered[:10]
             
             return []
