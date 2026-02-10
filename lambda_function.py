@@ -4,12 +4,14 @@ import urllib.request
 import ssl
 import os
 from typing import Dict, List, Any
+from math import radians, sin, cos, sqrt, atan2
 
 # SSL 인증서 검증 비활성화 (개발 환경용)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # 공공데이터 API 설정
 API_ENDPOINT = "https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire"
+API_ENDPOINT_LOCATION = "https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncLcinfoInqire"
 SERVICE_KEY = "89d895f43010a59cdcbc901e7aaf913724c1c0e874f4a3c0dc891fc73e927b28"
 
 # 진료과목 매핑 (CODE_MST의 'D000' 참조)
@@ -59,8 +61,76 @@ def parse_slack_command(text: str) -> Dict[str, str]:
     }
 
 
+def address_to_coords(address: str) -> tuple:
+    """주소를 위경도로 변환 (간단한 매칭)"""
+    LOCATION_DB = {
+        # 동 단위 (우선순위 높음)
+        "정자동": (37.3595, 127.1088), "서현동": (37.3836, 127.1234),
+        "야탑동": (37.4119, 127.1281), "이매동": (37.3897, 127.1289),
+        "판교동": (37.3948, 127.1114), "삼평동": (37.4021, 127.1076),
+        "수내동": (37.3833, 127.1019), "구미동": (37.3500, 127.1100),
+        # 서울 구
+        "강남구": (37.5172, 127.0473), "서초구": (37.4837, 127.0324),
+        "송파구": (37.5145, 127.1059), "강동구": (37.5301, 127.1238),
+        "종로구": (37.5735, 126.9792), "중구": (37.5641, 126.9979),
+        "용산구": (37.5326, 126.9905), "성동구": (37.5634, 127.0368),
+        "광진구": (37.5384, 127.0822), "동대문구": (37.5744, 127.0396),
+        "중랑구": (37.6063, 127.0925), "성북구": (37.5894, 127.0167),
+        "강북구": (37.6396, 127.0257), "도봉구": (37.6688, 127.0471),
+        "노원구": (37.6542, 127.0568), "은평구": (37.6027, 126.9291),
+        "서대문구": (37.5791, 126.9368), "마포구": (37.5663, 126.9019),
+        "양천구": (37.5170, 126.8664), "강서구": (37.5509, 126.8495),
+        "구로구": (37.4954, 126.8874), "금천구": (37.4519, 126.9020),
+        "영등포구": (37.5264, 126.8962), "동작구": (37.5124, 126.9393),
+        "관악구": (37.4784, 126.9516),
+        # 경기도
+        "분당구": (37.3595, 127.1088), "수정구": (37.4500, 127.1469),
+        "중원구": (37.4370, 127.1547),
+        "수원시": (37.2636, 127.0286), "성남시": (37.4201, 127.1262),
+        "용인시": (37.2410, 127.1776), "안양시": (37.3943, 126.9568),
+        "부천시": (37.5034, 126.7660), "광명시": (37.4786, 126.8644),
+        "평택시": (36.9921, 127.1129), "안산시": (37.3219, 126.8309),
+        "고양시": (37.6584, 126.8320), "과천시": (37.4292, 127.0137),
+        "구리시": (37.5943, 127.1296), "남양주시": (37.6361, 127.2168),
+        "의정부시": (37.7381, 127.0338),
+        # 인천
+        "인천": (37.4563, 126.7052), "남동구": (37.4475, 126.7314),
+        "연수구": (37.4106, 126.6784), "부평구": (37.5069, 126.7219),
+        # 기타
+        "대전": (36.3504, 127.3845), "대구": (35.8714, 128.6014),
+        "부산": (35.1796, 129.0756), "광주": (35.1595, 126.8526),
+        "울산": (35.5384, 129.3114), "세종": (36.4800, 127.2890),
+    }
+    
+    # 가장 구체적인 위치부터 찾기 (동이 우선)
+    # 주소를 역순으로 검색 (뒤에서부터 = 더 구체적)
+    address_parts = address.split()
+    for part in reversed(address_parts):
+        for location, coords in LOCATION_DB.items():
+            if location in part or part in location:
+                return coords
+    
+    # 전체 주소에서 찾기
+    for location, coords in LOCATION_DB.items():
+        if location in address:
+            return coords
+    
+    return (37.5665, 126.9780)  # 기본값: 서울시청
+
+
+def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """두 좌표 간의 거리 계산 (km)"""
+    R = 6371
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    return R * c
+
+
 def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
-    """병원 검색 API 호출"""
+    """병원 검색 API 호출 - 위치 기반"""
     
     # 진료과목 코드 찾기
     dept_code = DEPARTMENT_MAP.get(department)
@@ -68,71 +138,77 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
         print(f"진료과목 '{department}'를 찾을 수 없습니다.")
         return []
     
-    # 주소를 시/도와 시/군/구로 분리
-    location_parts = location.split()
-    sido = location_parts[0] if len(location_parts) > 0 else ""
-    sigungu = location_parts[1] if len(location_parts) > 1 else ""
+    # 주소를 위경도로 변환
+    lat, lon = address_to_coords(location)
+    print(f"검색 위치: {location} → 위도 {lat}, 경도 {lon}")
     
-    # 올바른 파라미터 설정
+    # 위치 기반 API 호출
     params = {
         "serviceKey": SERVICE_KEY,
-        "Q0": sido,  # 주소(시도)
-        "Q1": sigungu,  # 주소(시군구)
-        "QD": dept_code,  # 진료과목
+        "WGS84_LON": str(lon),
+        "WGS84_LAT": str(lat),
         "pageNo": "1",
-        "numOfRows": "10",
+        "numOfRows": "50",  # 많이 가져와서 필터링
         "_type": "json"
     }
     
-    url = f"{API_ENDPOINT}?{urllib.parse.urlencode(params)}"
-    print(f"요청 URL: {url}")
-    print(f"파라미터: Q0(시도)={sido}, Q1(시군구)={sigungu}, QD(진료과목)={dept_code}")
+    url = f"{API_ENDPOINT_LOCATION}?{urllib.parse.urlencode(params)}"
+    print(f"API 호출: 위치 기반 검색")
     
     try:
         with urllib.request.urlopen(url) as response:
             response_text = response.read().decode('utf-8')
-            print(f"API 응답: {response_text[:1000]}")
-            
             data = json.loads(response_text)
             
-            # 에러 체크
+            print(f"API 응답 (처음 500자): {response_text[:500]}")
+            
             if isinstance(data, dict) and "response" in data:
                 header = data["response"].get("header", {})
                 result_code = header.get("resultCode")
-                result_msg = header.get("resultMsg")
-                
-                print(f"응답 코드: {result_code}, 메시지: {result_msg}")
                 
                 if result_code != "00":
-                    print(f"API 오류: {result_msg}")
+                    print(f"API 오류: {header.get('resultMsg')}")
                     return []
                 
                 body = data["response"].get("body", {})
-                total_count = body.get("totalCount", 0)
-                print(f"총 검색 결과: {total_count}개")
-                
                 items = body.get("items", "")
                 
-                # items가 빈 문자열인 경우
                 if isinstance(items, str) and items == "":
-                    print("검색 결과 없음")
                     return []
                 
-                # items.item 구조 확인
                 if isinstance(items, dict) and "item" in items:
                     item_data = items["item"]
                     
-                    # 단일 결과인 경우 리스트로 변환
                     if isinstance(item_data, dict):
-                        return [item_data]
+                        all_hospitals = [item_data]
                     elif isinstance(item_data, list):
-                        return item_data
+                        all_hospitals = item_data
+                    else:
+                        return []
+                    
+                    # 진료과목으로 필터링 및 거리 계산
+                    filtered = []
+                    for hospital in all_hospitals:
+                        # 위경도 필드명이 다를 수 있음
+                        h_lat = hospital.get("latitude") or hospital.get("wgs84Lat", 0)
+                        h_lon = hospital.get("longitude") or hospital.get("wgs84Lon", 0)
+                        
+                        if h_lat and h_lon:
+                            distance = calculate_distance(lat, lon, float(h_lat), float(h_lon))
+                            hospital["distance"] = distance
+                            
+                            # 5km 이내만 포함
+                            if distance <= 5:
+                                filtered.append(hospital)
+                    
+                    # 거리순 정렬
+                    filtered.sort(key=lambda x: x.get("distance", 999))
+                    
+                    print(f"필터링 결과: {len(filtered)}개 병원")
+                    return filtered[:10]
             
             return []
     
-    except json.JSONDecodeError as e:
-        print(f"JSON 파싱 오류: {str(e)}")
-        return []
     except Exception as e:
         print(f"API 호출 오류: {str(e)}")
         return []
@@ -144,16 +220,18 @@ def format_hospital_info(hospitals: List[Dict[str, Any]]) -> str:
     if not hospitals:
         return "검색 결과가 없습니다. 장소나 진료과목을 확인해주세요."
     
-    message = f"🏥 *검색 결과: {len(hospitals)}개 병원*\n\n"
+    message = f"🏥 *검색 결과: {len(hospitals)}개 병원 (거리순)*\n\n"
     
     for idx, hospital in enumerate(hospitals[:5], 1):  # 최대 5개만 표시
         name = hospital.get("dutyName", hospital.get("dutyEmcls", "정보 없음"))
         addr = hospital.get("dutyAddr", hospital.get("dutyMapimg", "주소 정보 없음"))
         tel = hospital.get("dutyTel1", hospital.get("dutyTel3", "전화번호 없음"))
+        distance = hospital.get("distance", 0)
         
         message += f"*{idx}. {name}*\n"
         message += f"📍 주소: {addr}\n"
-        message += f"📞 전화: {tel}\n\n"
+        message += f"📞 전화: {tel}\n"
+        message += f"🚶 거리: 약 {distance:.2f}km\n\n"
     
     return message
 
