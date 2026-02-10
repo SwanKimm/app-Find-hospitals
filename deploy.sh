@@ -8,9 +8,10 @@ echo "🚀 Lambda 함수 배포 시작..."
 FUNCTION_NAME="hospital-finder-slack-app"
 REGION="ap-northeast-2"  # 서울 리전
 
-# ZIP 파일 생성
+# ZIP 파일 생성 (lambda_deploy.py를 lambda_function.py로 복사)
 echo "📦 배포 패키지 생성 중..."
-zip -r function.zip lambda_function.py
+cp lambda_deploy.py lambda_function.py
+zip function.zip lambda_function.py
 
 # Lambda 함수 업데이트 (이미 생성된 경우)
 echo "⬆️  Lambda 함수 업데이트 중..."
@@ -32,4 +33,11 @@ aws lambda update-function-code \
 echo "✅ 배포 완료!"
 
 # 정리
+rm lambda_function.py
 rm function.zip
+
+echo ""
+echo "📝 다음 단계:"
+echo "1. AWS Lambda 콘솔에서 함수 확인"
+echo "2. API Gateway 설정"
+echo "3. Slack 앱에 API Gateway URL 연결"
