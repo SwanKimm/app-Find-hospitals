@@ -9,6 +9,9 @@ from math import radians, sin, cos, sqrt, atan2
 # SSL 인증서 검증 비활성화 (개발 환경용)
 ssl._create_default_https_context = ssl._create_unverified_context
 
+# Kakao API 키 (환경변수 또는 직접 설정)
+os.environ['KAKAO_API_KEY'] = '1c40a7e4cd2e0187852872f40b41c698'
+
 # 공공데이터 API 설정
 API_ENDPOINT = "https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire"
 API_ENDPOINT_LOCATION = "https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncLcinfoInqire"
@@ -62,78 +65,47 @@ def parse_slack_command(text: str) -> Dict[str, str]:
 
 
 def address_to_coords(address: str) -> tuple:
-    """주소를 위경도로 변환 (간단한 매칭)"""
+    """
+    주소를 위경도로 변환
+    1. Kakao Geocoding API 시도
+    2. 실패 시 간단한 매칭 사용
+    """
     
-    # 도로명 주소 패턴 감지 (번길, 로, 대로 등)
-    is_road_address = any(keyword in address for keyword in ["로", "길", "대로"])
+    # 환경변수에서 Kakao API 키 가져오기
+    kakao_key = os.environ.get('KAKAO_API_KEY', '')
     
+    if kakao_key:
+        # Kakao Geocoding API 사용
+        try:
+            url = "https://dapi.kakao.com/v2/local/search/address.json"
+            params = {"query": address}
+            
+            request = urllib.request.Request(
+                f"{url}?{urllib.parse.urlencode(params)}",
+                headers={"Authorization": f"KakaoAK {kakao_key}"}
+            )
+            
+            with urllib.request.urlopen(request) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                
+                if data.get("documents"):
+                    doc = data["documents"][0]
+                    lon = float(doc["x"])
+                    lat = float(doc["y"])
+                    print(f"Kakao Geocoding: {address} → ({lat}, {lon})")
+                    return (lat, lon)
+        except Exception as e:
+            print(f"Kakao API 오류, 간단한 매칭 사용: {e}")
+    
+    # Kakao API 실패 시 또는 키가 없으면 간단한 매칭 사용
     LOCATION_DB = {
-        # 동 단위 (우선순위 높음)
-        "정자동": (37.3595, 127.1088), "서현동": (37.3836, 127.1234),
-        "야탑동": (37.4119, 127.1281), "이매동": (37.3897, 127.1289),
-        "판교동": (37.3948, 127.1114), "삼평동": (37.4021, 127.1076),
-        "수내동": (37.3833, 127.1019), "구미동": (37.3500, 127.1100),
-        "금곡동": (37.3500, 127.1100),
-        # 서울 구
         "강남구": (37.5172, 127.0473), "서초구": (37.4837, 127.0324),
-        "송파구": (37.5145, 127.1059), "강동구": (37.5301, 127.1238),
-        "종로구": (37.5735, 126.9792), "중구": (37.5641, 126.9979),
-        "용산구": (37.5326, 126.9905), "성동구": (37.5634, 127.0368),
-        "광진구": (37.5384, 127.0822), "동대문구": (37.5744, 127.0396),
-        "중랑구": (37.6063, 127.0925), "성북구": (37.5894, 127.0167),
-        "강북구": (37.6396, 127.0257), "도봉구": (37.6688, 127.0471),
-        "노원구": (37.6542, 127.0568), "은평구": (37.6027, 126.9291),
-        "서대문구": (37.5791, 126.9368), "마포구": (37.5663, 126.9019),
-        "양천구": (37.5170, 126.8664), "강서구": (37.5509, 126.8495),
-        "구로구": (37.4954, 126.8874), "금천구": (37.4519, 126.9020),
-        "영등포구": (37.5264, 126.8962), "동작구": (37.5124, 126.9393),
-        "관악구": (37.4784, 126.9516),
-        # 경기도
-        "분당구": (37.3595, 127.1088), "수정구": (37.4500, 127.1469),
-        "중원구": (37.4370, 127.1547),
-        "수원시": (37.2636, 127.0286), "성남시": (37.4201, 127.1262),
-        "용인시": (37.2410, 127.1776), "안양시": (37.3943, 126.9568),
-        "부천시": (37.5034, 126.7660), "광명시": (37.4786, 126.8644),
-        "평택시": (36.9921, 127.1129), "안산시": (37.3219, 126.8309),
-        "고양시": (37.6584, 126.8320), "과천시": (37.4292, 127.0137),
-        "구리시": (37.5943, 127.1296), "남양주시": (37.6361, 127.2168),
-        "의정부시": (37.7381, 127.0338),
-        # 인천
-        "인천": (37.4563, 126.7052), "남동구": (37.4475, 126.7314),
-        "연수구": (37.4106, 126.6784), "부평구": (37.5069, 126.7219),
-        # 기타
-        "대전": (36.3504, 127.3845), "대구": (35.8714, 128.6014),
-        "부산": (35.1796, 129.0756), "광주": (35.1595, 126.8526),
-        "울산": (35.5384, 129.3114), "세종": (36.4800, 127.2890),
-        # 주요 도로명 (대략적인 중심 좌표)
-        "성남대로": (37.4201, 127.1262),
-        "정자일로": (37.3595, 127.1088),
-        "내정로": (37.3595, 127.1088),
+        "송파구": (37.5145, 127.1059), "성남시": (37.4201, 127.1262),
+        "분당구": (37.3595, 127.1088), "수원시": (37.2636, 127.0286),
+        "인천": (37.4563, 126.7052), "대전": (36.3504, 127.3845),
+        "대구": (35.8714, 128.6014), "부산": (35.1796, 129.0756),
     }
     
-    # 도로명 주소인 경우
-    if is_road_address:
-        # 도로명에서 키워드 추출
-        for road_name in ["성남대로", "정자일로", "내정로"]:
-            if road_name in address:
-                # 도로명 좌표 반환
-                if road_name in LOCATION_DB:
-                    return LOCATION_DB[road_name]
-        
-        # 도로명을 찾지 못하면 시/구로 검색
-        for location, coords in LOCATION_DB.items():
-            if location in address and location.endswith(("시", "구")):
-                return coords
-    
-    # 일반 주소: 가장 구체적인 위치부터 찾기 (동이 우선)
-    # 주소를 역순으로 검색 (뒤에서부터 = 더 구체적)
-    address_parts = address.split()
-    for part in reversed(address_parts):
-        for location, coords in LOCATION_DB.items():
-            if location in part or part in location:
-                return coords
-    
-    # 전체 주소에서 찾기
     for location, coords in LOCATION_DB.items():
         if location in address:
             return coords
@@ -169,6 +141,26 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
     location_parts = location.split()
     sido = location_parts[0] if len(location_parts) > 0 else ""
     sigungu = location_parts[1] if len(location_parts) > 1 else ""
+    
+    # 시/도 이름 정규화 (서울시 → 서울특별시)
+    sido_map = {
+        "서울시": "서울특별시",
+        "서울": "서울특별시",
+        "부산시": "부산광역시",
+        "부산": "부산광역시",
+        "대구시": "대구광역시",
+        "대구": "대구광역시",
+        "인천시": "인천광역시",
+        "인천": "인천광역시",
+        "광주시": "광주광역시",
+        "광주": "광주광역시",
+        "대전시": "대전광역시",
+        "대전": "대전광역시",
+        "울산시": "울산광역시",
+        "울산": "울산광역시",
+    }
+    
+    sido = sido_map.get(sido, sido)
     
     # 목록 API로 진료과목 필터링 (많이 가져오기)
     params = {

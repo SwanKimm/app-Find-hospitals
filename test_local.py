@@ -10,6 +10,7 @@ def test_hospital_search():
         "성남시 성남대로331번길 8 이비인후과",
         "성남시 성남대로331번길 8 피부과",
         "성남시 성남대로331번길 8 내과",
+        "서울시 용마산로 670 내과",
     ]
     
     for text in test_cases:
@@ -48,5 +49,5 @@ def test_hospital_search():
 
 if __name__ == "__main__":
     print("=== 병원 찾기 앱 로컬 테스트 ===")
-    print("검색 위치: 성남시 성남대로331번길 8\n")
+    print("다양한 주소 형식 테스트\n")
     test_hospital_search()

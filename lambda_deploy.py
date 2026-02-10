@@ -157,6 +157,26 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
     sido = location_parts[0] if len(location_parts) > 0 else ""
     sigungu = location_parts[1] if len(location_parts) > 1 else ""
     
+    # 시/도 이름 정규화 (서울시 → 서울특별시)
+    sido_map = {
+        "서울시": "서울특별시",
+        "서울": "서울특별시",
+        "부산시": "부산광역시",
+        "부산": "부산광역시",
+        "대구시": "대구광역시",
+        "대구": "대구광역시",
+        "인천시": "인천광역시",
+        "인천": "인천광역시",
+        "광주시": "광주광역시",
+        "광주": "광주광역시",
+        "대전시": "대전광역시",
+        "대전": "대전광역시",
+        "울산시": "울산광역시",
+        "울산": "울산광역시",
+    }
+    
+    sido = sido_map.get(sido, sido)
+    
     # 목록 API로 진료과목 필터링
     params = {
         "serviceKey": SERVICE_KEY,
