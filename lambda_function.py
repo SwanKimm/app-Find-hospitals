@@ -12,33 +12,33 @@ ssl._create_default_https_context = ssl._create_unverified_context
 API_ENDPOINT = "https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire"
 SERVICE_KEY = "89d895f43010a59cdcbc901e7aaf913724c1c0e874f4a3c0dc891fc73e927b28"
 
-# 진료과목 매핑
+# 진료과목 매핑 (CODE_MST의 'D000' 참조)
 DEPARTMENT_MAP = {
-    "내과": "01",
-    "소아청소년과": "02",
-    "신경과": "03",
-    "정신건강의학과": "04",
-    "피부과": "05",
-    "외과": "06",
-    "흉부외과": "07",
-    "정형외과": "08",
-    "신경외과": "09",
-    "성형외과": "10",
-    "산부인과": "11",
-    "안과": "12",
-    "이비인후과": "13",
-    "비뇨기과": "14",
-    "영상의학과": "15",
-    "방사선종양학과": "16",
-    "병리과": "17",
-    "진단검사의학과": "18",
-    "결핵과": "19",
-    "재활의학과": "20",
-    "핵의학과": "21",
-    "가정의학과": "22",
-    "응급의학과": "23",
-    "치과": "24",
-    "한의과": "25"
+    "내과": "D001",
+    "소아청소년과": "D002",
+    "신경과": "D003",
+    "정신건강의학과": "D004",
+    "피부과": "D005",
+    "외과": "D006",
+    "흉부외과": "D007",
+    "정형외과": "D008",
+    "신경외과": "D009",
+    "성형외과": "D010",
+    "산부인과": "D011",
+    "안과": "D012",
+    "이비인후과": "D013",
+    "비뇨기과": "D014",
+    "영상의학과": "D015",
+    "방사선종양학과": "D016",
+    "병리과": "D017",
+    "진단검사의학과": "D018",
+    "결핵과": "D019",
+    "재활의학과": "D020",
+    "핵의학과": "D021",
+    "가정의학과": "D022",
+    "응급의학과": "D023",
+    "치과": "D024",
+    "한의과": "D025"
 }
 
 
@@ -73,23 +73,20 @@ def search_hospitals(location: str, department: str) -> List[Dict[str, Any]]:
     sido = location_parts[0] if len(location_parts) > 0 else ""
     sigungu = location_parts[1] if len(location_parts) > 1 else ""
     
-    # 파라미터 설정 - 시군구 없이 시도만으로 먼저 시도
+    # 올바른 파라미터 설정
     params = {
         "serviceKey": SERVICE_KEY,
-        "QZ": sido,  # 시도
+        "Q0": sido,  # 주소(시도)
+        "Q1": sigungu,  # 주소(시군구)
         "QD": dept_code,  # 진료과목
         "pageNo": "1",
         "numOfRows": "10",
         "_type": "json"
     }
     
-    # 시군구가 있으면 추가
-    if sigungu:
-        params["Q1"] = sigungu
-    
     url = f"{API_ENDPOINT}?{urllib.parse.urlencode(params)}"
     print(f"요청 URL: {url}")
-    print(f"파라미터: 시도={sido}, 시군구={sigungu}, 진료과목={department}({dept_code})")
+    print(f"파라미터: Q0(시도)={sido}, Q1(시군구)={sigungu}, QD(진료과목)={dept_code}")
     
     try:
         with urllib.request.urlopen(url) as response:
